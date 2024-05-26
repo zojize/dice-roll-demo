@@ -1,0 +1,36 @@
+{
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite --port 3333 --open",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vueuse/core": "^10.9.0",
+    "cannon-es": "^0.20.0",
+    "seedrandom": "^3.0.5",
+    "three": "0.138.0",
+    "tweakpane": "^4.0.3",
+    "vue": "^3.4.27",
+    "vue-router": "^4.3.2"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^2.18.1",
+    "@tweakpane/core": "^2.0.3",
+    "@types/seedrandom": "^3.0.8",
+    "@types/three": "0.138.0",
+    "@unocss/eslint-config": "^0.60.2",
+    "@unocss/eslint-plugin": "^0.60.2",
+    "eslint": "^9.3.0",
+    "eslint-plugin-format": "^0.1.1",
+    "lint-staged": "^15.2.2",
+    "pnpm": "^9.1.1",
+    "simple-git-hooks": "^2.11.1",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11",
+    "vitest": "^1.6.0",
+    "vue-tsc": "^2.0.19"
+  }
+}

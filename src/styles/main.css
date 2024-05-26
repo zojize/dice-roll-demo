@@ -1,0 +1,55 @@
+*,
+*::after,
+*::before {
+  box-sizing: border-box;
+}
+
+:root {
+  font-size: 16px;
+  --color-text: #000;
+  --color-bg: #ddd;
+  --color-link: #888;
+  --color-link-hover: #000;
+}
+
+body {
+  margin: 0;
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+
+canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.ui-controls {
+  position: relative;
+  width: 100%;
+  max-width: 500px;
+  font-family: inherit;
+  user-select: none;
+  line-height: 1.5;
+  padding: 10px;
+  pointer-events: none;
+}
+
+.score {
+  font-weight: bold;
+}
+
+.ui-controls span {
+  display: inline-block;
+  min-width: 1.8em;
+  color: #d45f2e;
+}
+
+.ui-controls #score-result:after {
+  content: "\200b";
+}
