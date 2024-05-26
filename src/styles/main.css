@@ -30,14 +30,15 @@ canvas {
 }
 
 .ui-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   position: relative;
   width: 100%;
   max-width: 500px;
   font-family: inherit;
-  user-select: none;
   line-height: 1.5;
   padding: 10px;
-  pointer-events: none;
 }
 
 .score {
