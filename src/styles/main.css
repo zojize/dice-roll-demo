@@ -51,6 +51,10 @@ canvas {
   color: #d45f2e;
 }
 
+.ui-controls a:visited {
+  color: unset;
+}
+
 .ui-controls #score-result:after {
   content: "\200b";
 }
