@@ -35,7 +35,7 @@ initPhysics()
 initScene()
 initUI()
 
-throwDice()
+throwDice(params.seed || undefined)
 
 window.addEventListener('resize', updateSceneSize)
 
@@ -79,6 +79,12 @@ function initUI() {
 
   folder.addButton({ title: 'Throw Dice' })
     .on('click', () => throwDice(params.seed || undefined))
+
+  pane.on('change', () => {
+    localStorage.setItem('PANE_STATE', JSON.stringify(pane.exportState()))
+  })
+  if (localStorage.getItem('PANE_STATE'))
+    pane.importState(JSON.parse(localStorage.getItem('PANE_STATE')!))
 }
 
 function initScene() {
@@ -314,7 +320,7 @@ function throwDice(seed?: string) {
 function simulateThrow(seed?: string) {
   simulationResult.textContent = ''
 
-  const rng = seedrandom(seed ?? `${Math.random()}`)
+  const rng = seedrandom(seed ?? Math.random().toString(36).slice(2))
   let numSlept = 0
   const simulationRecord: [CANNON.Vec3, CANNON.Quaternion][][] = []
   const rollResult = simulationDiceArray.map(() => 0)
@@ -357,9 +363,15 @@ function simulateThrow(seed?: string) {
   })
 
   const simulationStart = performance.now()
+  let i = 0
   while (numSlept < params.numberOfDice) {
     simulationRecord.push(simulationDiceArray.map(d => [d.position.clone(), d.quaternion.clone()]))
     simulationWorld.step(1 / 60, 1 / 60)
+    i++;
+    if (performance.now() - simulationStart > 1000) {
+      console.error('simulation timed out after ' + i + ' steps, with seed ' + seed);
+      break
+    }
   }
   simulationRecord.push(simulationDiceArray.map(d => [d.position.clone(), d.quaternion.clone()]))
   // eslint-disable-next-line no-console
@@ -509,7 +521,7 @@ function makeDesired(mesh: THREE.Group, actual: number, desired: number) {
       rotationAxis.set(-1, 0, 0)
     }
     else if (desired === 2) {
-      rotationAxis.set(1, 0, 1)
+      rotationAxis.set(1, 0, -1)
       angle = Math.PI
     }
     else if (desired === 3) {
