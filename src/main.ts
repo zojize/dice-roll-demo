@@ -8,6 +8,7 @@ import * as BufferGeometryUtils from './BufferGeometryUtils'
 
 const canvasEl = document.querySelector('#canvas')!
 const simulationResult = document.querySelector('#simulation-result')!
+let renderId: symbol
 
 let renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
@@ -67,7 +68,7 @@ function initUI() {
     })
 
   magicFolder = folder.addFolder({ title: 'Magic!' })
-  params.desiredRolls = simulationDiceArray.map(() => 1)
+  params.desiredRolls = simulationDiceArray.map(() => 1) // result is 1 by default
   params.desiredRolls.forEach((_, i) =>
     // @ts-expect-error: tweakpane type bug
     magicFolder.addBinding(params.desiredRolls, `${i}`, {
@@ -83,6 +84,7 @@ function initUI() {
   pane.on('change', () => {
     localStorage.setItem('PANE_STATE', JSON.stringify(pane.exportState()))
   })
+
   if (localStorage.getItem('PANE_STATE'))
     pane.importState(JSON.parse(localStorage.getItem('PANE_STATE')!))
 }
@@ -313,17 +315,20 @@ function updateSceneSize() {
 }
 
 function throwDice(seed?: string) {
-  seed ??= `${Math.random()}`
-  renderSimulation(simulateThrow(seed))
+  // eslint-disable-next-line symbol-description
+  renderId = Symbol()
+  renderSimulation(simulateThrow(seed), renderId)
 }
 
 function simulateThrow(seed?: string) {
   simulationResult.textContent = ''
-
-  const rng = seedrandom(seed ?? Math.random().toString(36).slice(2))
+  seed ??= Math.random().toString(36).slice(2)
+  const rng = seedrandom(seed)
   let numSlept = 0
   const simulationRecord: [CANNON.Vec3, CANNON.Quaternion][][] = []
-  const rollResult = simulationDiceArray.map(() => 0)
+  const rollResult = simulationDiceArray.map(() => 1)
+
+  const eventHandlers: (Function | null)[] = []
 
   simulationDiceArray.forEach((body, dIdx) => {
     body.velocity.setZero()
@@ -353,12 +358,14 @@ function simulateThrow(seed?: string) {
         numSlept += 1
         showSimulationResults(face)
         rollResult[dIdx] = face
+        eventHandlers[dIdx] = null
         body.removeEventListener('sleep', eventHandler)
       }
       else {
         body.allowSleep = true
       }
     }
+    eventHandlers.push(eventHandler)
     body.addEventListener('sleep', eventHandler)
   })
 
@@ -370,6 +377,7 @@ function simulateThrow(seed?: string) {
     i++
     if (performance.now() - simulationStart > 1000) {
       console.error(`simulation timed out after ${i} steps, with seed ${seed}`)
+      eventHandlers.map((f, i) => f && simulationDiceArray[i].removeEventListener('sleep', f))
       break
     }
   }
@@ -379,7 +387,7 @@ function simulateThrow(seed?: string) {
   return [rollResult, simulationRecord] as const
 }
 
-function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simulateThrow>) {
+function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simulateThrow>, id: symbol) {
   const start = performance.now()
   const renderHelper = () => {
     const now = performance.now()
@@ -388,7 +396,7 @@ function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simu
     const j = Math.ceil(step)
 
     if (simulationRecord[j]) {
-      meshArray.forEach ((mesh, idx) => {
+      meshArray.forEach((mesh, idx) => {
         mesh.position.lerpVectors(
           simulationRecord[i][idx][0] as unknown as THREE.Vector3,
           simulationRecord[j][idx][0] as unknown as THREE.Vector3,
@@ -401,7 +409,8 @@ function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simu
           step - i,
         )
       })
-      requestAnimationFrame(renderHelper)
+      if (id === renderId)
+        requestAnimationFrame(renderHelper)
     }
     else {
       meshArray.forEach((mesh, idx) => {
@@ -411,10 +420,9 @@ function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simu
     }
     if (params.magic)
       meshArray.forEach((mesh, i) => makeDesired(mesh, rollResult[i], params.desiredRolls[i]))
-
     renderer.render(scene, camera)
   }
-  requestAnimationFrame(renderHelper)
+  renderHelper()
 }
 
 function getFaceUp(euler: CANNON.Vec3) {
