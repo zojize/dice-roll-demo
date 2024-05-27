@@ -367,9 +367,9 @@ function simulateThrow(seed?: string) {
   while (numSlept < params.numberOfDice) {
     simulationRecord.push(simulationDiceArray.map(d => [d.position.clone(), d.quaternion.clone()]))
     simulationWorld.step(1 / 60, 1 / 60)
-    i++;
+    i++
     if (performance.now() - simulationStart > 1000) {
-      console.error('simulation timed out after ' + i + ' steps, with seed ' + seed);
+      console.error(`simulation timed out after ${i} steps, with seed ${seed}`)
       break
     }
   }
