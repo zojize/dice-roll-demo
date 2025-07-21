@@ -622,8 +622,9 @@ function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simu
     if (params.storeFrames) {
       const canvas = renderer.domElement
       const base64Frame = canvas.toDataURL('image/png')
+      if (storedFrames.length > 0)
+        storedFrames[storedFrames.length - 1].duration = now - lastFrameTime
       storedFrames.push({ frame: base64Frame })
-      storedFrames[storedFrames.length - 1].duration = now - lastFrameTime
     }
 
     lastFrameTime = now
