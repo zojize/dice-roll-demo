@@ -45,7 +45,7 @@ initPhysics()
 initScene()
 initUI()
 
-const storedFrames: string[] = []
+const storedFrames: { duration?: number, frame: string }[] = []
 ;(window as any).storedFrames = storedFrames
 ;(window as any).params = params
 ;(window as any).throwDice = throwDice
@@ -570,11 +570,11 @@ function simulateThrow(seed?: string, retryCount = 0) {
   return [rollResult, simulationRecord] as const
 }
 
-
 function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simulateThrow>, id: symbol) {
   const start = performance.now()
   storedFrames.length = 0 // Reset stored frames for new simulation
 
+  let lastFrameTime = start
   const renderHelper = () => {
     const now = performance.now()
     const step = ((now - start) / 1000) * 60
@@ -622,8 +622,11 @@ function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simu
     if (params.storeFrames) {
       const canvas = renderer.domElement
       const base64Frame = canvas.toDataURL('image/png')
-      storedFrames.push(base64Frame)
+      storedFrames.push({ frame: base64Frame })
+      storedFrames[storedFrames.length - 1].duration = now - lastFrameTime
     }
+
+    lastFrameTime = now
   }
   renderHelper()
 }
