@@ -20,17 +20,26 @@ const pane = new Pane()
 
 const params = {
   numberOfDice: 2,
-  segments: 40,
-  edgeRadius: 0.07,
-  notchRadius: 0.12,
-  notchDepth: 0.1,
   desiredRolls: [6, 3],
   magic: false,
   seed: '',
+  storeFrames: false,
 }
+
+// Fixed constants (not configurable)
+const SEGMENTS = 40
+const EDGE_RADIUS = 0.07
+const NOTCH_RADIUS = 0.12
+const NOTCH_DEPTH = 0.1
+const BOX_WIDTH = 10
+const BOX_HEIGHT = 6
 
 const meshArray: THREE.Group[] = []
 const simulationDiceArray: CANNON.Body[] = []
+const wallBodies: CANNON.Body[] = []
+
+// Parse query parameters on page load
+parseQueryParams()
 
 initPhysics()
 initScene()
@@ -39,6 +48,45 @@ initUI()
 throwDice(params.seed || undefined)
 
 window.addEventListener('resize', updateSceneSize)
+
+function parseQueryParams() {
+  const urlParams = new URLSearchParams(window.location.search)
+
+  if (urlParams.has('numberOfDice')) {
+    const value = Number.parseInt(urlParams.get('numberOfDice')!)
+    if (!Number.isNaN(value) && value >= 1 && value <= 10)
+      params.numberOfDice = value
+  }
+
+  if (urlParams.has('magic'))
+    params.magic = urlParams.get('magic') === 'true'
+
+  if (urlParams.has('seed'))
+    params.seed = urlParams.get('seed') || ''
+
+  if (urlParams.has('storeFrames'))
+    params.storeFrames = urlParams.get('storeFrames') === 'true'
+
+  if (urlParams.has('desiredRolls')) {
+    try {
+      const rolls = JSON.parse(urlParams.get('desiredRolls')!)
+      if (Array.isArray(rolls) && rolls.every(r => Number.isInteger(r) && r >= 1 && r <= 6))
+        params.desiredRolls = rolls
+    }
+    catch {
+      // Invalid JSON, use defaults
+    }
+  }
+}
+
+function updateURL() {
+  const url = new URL(window.location.href)
+  url.searchParams.set('numberOfDice', params.numberOfDice.toString())
+  url.searchParams.set('magic', params.magic.toString())
+  url.searchParams.set('seed', params.seed)
+  url.searchParams.set('desiredRolls', JSON.stringify(params.desiredRolls))
+  window.history.replaceState({}, '', url.toString())
+}
 
 function initUI() {
   let magicFolder: FolderApi
@@ -62,6 +110,7 @@ function initUI() {
   })
 
   folder.addBinding(params, 'seed')
+
   folder.addBinding(params, 'magic')
     .on('change', () => {
       magicFolder.hidden = !params.magic
@@ -83,6 +132,7 @@ function initUI() {
 
   pane.on('change', () => {
     localStorage.setItem('PANE_STATE', JSON.stringify(pane.exportState()))
+    updateURL()
   })
 
   if (localStorage.getItem('PANE_STATE'))
@@ -103,6 +153,7 @@ function initScene() {
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300)
   camera.position.set(0, 2, 0).multiplyScalar(7)
   camera.lookAt(0, -7, 0)
+  camera.zoom = 1.5
 
   updateSceneSize()
 
@@ -118,6 +169,7 @@ function initScene() {
   scene.add(topLight)
 
   createFloor()
+  createInvisibleWalls()
   diceMesh = createDiceMesh()
   initDice()
 }
@@ -146,7 +198,7 @@ function createFloor() {
       opacity: 0.1,
     }),
   )
-  floor.receiveShadow = true
+  floor.receiveShadow = false
   floor.position.y = -7
   floor.quaternion.setFromAxisAngle(new THREE.Vector3(-1, 0, 0), Math.PI * 0.5)
   scene.add(floor)
@@ -158,6 +210,47 @@ function createFloor() {
   simulationFloorBody.position.copy(floor.position as unknown as CANNON.Vec3)
   simulationFloorBody.quaternion.copy(floor.quaternion as unknown as CANNON.Quaternion)
   simulationWorld.addBody(simulationFloorBody)
+}
+
+function createInvisibleWalls() {
+  const halfWidth = BOX_WIDTH / 2
+  const halfHeight = BOX_HEIGHT / 2
+  const wallHeight = 10 // Height of the invisible walls
+  const floorY = -7 // Same as floor position
+
+  // Create invisible wall bodies for physics simulation
+  const walls = [
+    // Front wall (positive Z)
+    {
+      position: new CANNON.Vec3(0, floorY + wallHeight / 2, halfHeight),
+      shape: new CANNON.Box(new CANNON.Vec3(halfWidth, wallHeight / 2, 0.1)),
+    },
+    // Back wall (negative Z)
+    {
+      position: new CANNON.Vec3(0, floorY + wallHeight / 2, -halfHeight),
+      shape: new CANNON.Box(new CANNON.Vec3(halfWidth, wallHeight / 2, 0.1)),
+    },
+    // Left wall (negative X)
+    {
+      position: new CANNON.Vec3(-halfWidth, floorY + wallHeight / 2, 0),
+      shape: new CANNON.Box(new CANNON.Vec3(0.1, wallHeight / 2, halfHeight)),
+    },
+    // Right wall (positive X)
+    {
+      position: new CANNON.Vec3(halfWidth, floorY + wallHeight / 2, 0),
+      shape: new CANNON.Box(new CANNON.Vec3(0.1, wallHeight / 2, halfHeight)),
+    },
+  ]
+
+  walls.forEach((wall) => {
+    const wallBody = new CANNON.Body({
+      type: CANNON.Body.STATIC,
+      shape: wall.shape,
+    })
+    wallBody.position.copy(wall.position)
+    simulationWorld.addBody(wallBody)
+    wallBodies.push(wallBody)
+  })
 }
 
 function createDiceMesh() {
@@ -197,10 +290,10 @@ function createDice() {
 }
 
 function createBoxGeometry() {
-  let boxGeometry = new THREE.BoxGeometry(1, 1, 1, params.segments, params.segments, params.segments)
+  let boxGeometry = new THREE.BoxGeometry(1, 1, 1, SEGMENTS, SEGMENTS, SEGMENTS)
 
   const positionAttr = boxGeometry.attributes.position
-  const subCubeHalfSize = 0.5 - params.edgeRadius
+  const subCubeHalfSize = 0.5 - EDGE_RADIUS
 
   for (let i = 0; i < positionAttr.count; i++) {
     let position = new THREE.Vector3().fromBufferAttribute(positionAttr, i)
@@ -209,32 +302,32 @@ function createBoxGeometry() {
     const addition = new THREE.Vector3().subVectors(position, subCube)
 
     if (Math.abs(position.x) > subCubeHalfSize && Math.abs(position.y) > subCubeHalfSize && Math.abs(position.z) > subCubeHalfSize) {
-      addition.normalize().multiplyScalar(params.edgeRadius)
+      addition.normalize().multiplyScalar(EDGE_RADIUS)
       position = subCube.add(addition)
     }
     else if (Math.abs(position.x) > subCubeHalfSize && Math.abs(position.y) > subCubeHalfSize) {
       addition.z = 0
-      addition.normalize().multiplyScalar(params.edgeRadius)
+      addition.normalize().multiplyScalar(EDGE_RADIUS)
       position.x = subCube.x + addition.x
       position.y = subCube.y + addition.y
     }
     else if (Math.abs(position.x) > subCubeHalfSize && Math.abs(position.z) > subCubeHalfSize) {
       addition.y = 0
-      addition.normalize().multiplyScalar(params.edgeRadius)
+      addition.normalize().multiplyScalar(EDGE_RADIUS)
       position.x = subCube.x + addition.x
       position.z = subCube.z + addition.z
     }
     else if (Math.abs(position.y) > subCubeHalfSize && Math.abs(position.z) > subCubeHalfSize) {
       addition.x = 0
-      addition.normalize().multiplyScalar(params.edgeRadius)
+      addition.normalize().multiplyScalar(EDGE_RADIUS)
       position.y = subCube.y + addition.y
       position.z = subCube.z + addition.z
     }
 
     const notchWave = (v: number) => {
-      v = (1 / params.notchRadius) * v
+      v = (1 / NOTCH_RADIUS) * v
       v = Math.PI * Math.max(-1, Math.min(1, v))
-      return params.notchDepth * (Math.cos(v) + 1.0)
+      return NOTCH_DEPTH * (Math.cos(v) + 1.0)
     }
     const notch = (pos: [number, number]) => notchWave(pos[0]) * notchWave(pos[1])
 
@@ -287,7 +380,7 @@ function createBoxGeometry() {
 }
 
 function createInnerGeometry() {
-  const baseGeometry = new THREE.PlaneGeometry(1 - 2 * params.edgeRadius, 1 - 2 * params.edgeRadius)
+  const baseGeometry = new THREE.PlaneGeometry(1 - 2 * EDGE_RADIUS, 1 - 2 * EDGE_RADIUS)
   const offset = 0.48
   // return BufferGeometryUtils.mergeGeometries([
   return BufferGeometryUtils.mergeBufferGeometries([
@@ -314,13 +407,58 @@ function updateSceneSize() {
   renderer.render(scene, camera)
 }
 
+(window as any).throwDice = throwDice
 function throwDice(seed?: string) {
   // eslint-disable-next-line symbol-description
   renderId = Symbol()
   renderSimulation(simulateThrow(seed), renderId)
 }
 
-function simulateThrow(seed?: string) {
+function generateNonOverlappingPositions(numDice: number, rng: () => number): CANNON.Vec3[] {
+  const positions: CANNON.Vec3[] = []
+  const minDistance = 1.8 // Reduced minimum distance for closer spacing
+  const maxAttempts = 100 // Maximum attempts to find a valid position
+  const startHeight = 3 // Height above the floor to start dice
+  const fixedZ = 0 // All dice start in the same Z plane (centered)
+
+  // Calculate usable area within the invisible walls - more conservative margins
+  const usableWidth = Math.min(BOX_WIDTH - 2, 8) // Limit to reasonable area, leave 1 unit margin on each side
+  const halfUsableWidth = usableWidth / 2
+
+  for (let i = 0; i < numDice; i++) {
+    let validPosition = false
+    let attempts = 0
+    let newPosition: CANNON.Vec3
+
+    do {
+      // Generate random X position within the constrained area, same Z for all
+      const x = (rng() - 0.5) * 2 * halfUsableWidth
+      const y = startHeight + rng() * 1 // Small random height variation
+
+      newPosition = new CANNON.Vec3(x, y, fixedZ)
+
+      // Check if this position is far enough from all existing positions (only check X distance since Z is fixed)
+      validPosition = positions.every((existingPos) => {
+        const distance = Math.abs(newPosition.x - existingPos.x)
+        return distance >= minDistance
+      })
+
+      attempts++
+    } while (!validPosition && attempts < maxAttempts)
+
+    // If we couldn't find a valid position after max attempts, fall back to a grid position
+    if (!validPosition) {
+      const fallbackX = (i - (numDice - 1) / 2) * minDistance // Center the grid around 0
+      newPosition = new CANNON.Vec3(fallbackX, startHeight, fixedZ)
+    }
+
+    positions.push(newPosition)
+  }
+
+  return positions
+}
+
+function simulateThrow(seed?: string, retryCount = 0) {
   simulationResult.textContent = ''
   seed ??= Math.random().toString(36).slice(2)
   const rng = seedrandom(seed)
@@ -330,18 +468,27 @@ function simulateThrow(seed?: string) {
 
   const eventHandlers: (Function | null)[] = []
 
+  // Generate random positions for dice that don't overlap
+  const dicePositions = generateNonOverlappingPositions(params.numberOfDice, rng)
+
+  // Stuck detection variables
+  const stuckDetectionThreshold = 0.001 // Negligible movement threshold
+  const stuckDetectionSteps = 1000 // Number of steps to check for stuck state
+  let lastPositions: CANNON.Vec3[] = []
+
   simulationDiceArray.forEach((body, dIdx) => {
     body.velocity.setZero()
     body.angularVelocity.setZero()
 
-    body.position = new CANNON.Vec3(dIdx * 1.5, 0, 0)
+    body.position = dicePositions[dIdx]
 
     const rotation = new THREE.Euler(2 * Math.PI * rng(), 2 * Math.PI * rng(), 2 * Math.PI * rng())
     body.quaternion.copy(new THREE.Quaternion().setFromEuler(rotation) as unknown as CANNON.Quaternion)
 
-    const force = 3 + 5 * rng()
+    const force = 3 + 10 * rng()
+    const theta = 2 * Math.PI * rng()
     body.applyImpulse(
-      new CANNON.Vec3(-force, force, 0),
+      new CANNON.Vec3(Math.sin(theta) * force, Math.cos(theta) * force, 0),
       new CANNON.Vec3(0, 0, 0.2),
     )
 
@@ -375,6 +522,38 @@ function simulateThrow(seed?: string) {
     simulationRecord.push(simulationDiceArray.map(d => [d.position.clone(), d.quaternion.clone()]))
     simulationWorld.step(1 / 60, 1 / 60)
     i++
+
+    // Check for stuck state every stuckDetectionSteps
+    if (i % stuckDetectionSteps === 0) {
+      const currentPositions = simulationDiceArray.map(d => d.position.clone())
+      const currentVelocities = simulationDiceArray.map(d => d.velocity.clone())
+
+      if (lastPositions.length > 0) {
+        let allStuck = true
+        for (let dIdx = 0; dIdx < simulationDiceArray.length; dIdx++) {
+          const positionDelta = currentPositions[dIdx].distanceTo(lastPositions[dIdx])
+          const velocityMagnitude = currentVelocities[dIdx].length()
+
+          // If any dice has significant movement or velocity, not stuck
+          if (positionDelta > stuckDetectionThreshold || velocityMagnitude > stuckDetectionThreshold) {
+            allStuck = false
+            break
+          }
+        }
+
+        if (allStuck && retryCount < 3) {
+          console.warn(`Simulation appears stuck after ${i} steps with seed ${seed}, retrying with new seed (attempt ${retryCount + 1})`)
+          eventHandlers.map((f, idx) => f && simulationDiceArray[idx].removeEventListener('sleep', f))
+
+          // Generate new seed and retry
+          const newSeed = Math.random().toString(36).slice(2)
+          return simulateThrow(newSeed, retryCount + 1)
+        }
+      }
+
+      lastPositions = currentPositions
+    }
+
     if (performance.now() - simulationStart > 1000) {
       console.error(`simulation timed out after ${i} steps, with seed ${seed}`)
       eventHandlers.map((f, i) => f && simulationDiceArray[i].removeEventListener('sleep', f))
@@ -387,8 +566,12 @@ function simulateThrow(seed?: string) {
   return [rollResult, simulationRecord] as const
 }
 
+const storedFrames: string[] = []
+;(window as any).storedFrames = storedFrames
 function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simulateThrow>, id: symbol) {
   const start = performance.now()
+  storedFrames.length = 0 // Reset stored frames for new simulation
+
   const renderHelper = () => {
     const now = performance.now()
     const step = ((now - start) / 1000) * 60
@@ -417,10 +600,27 @@ function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simu
         mesh.position.copy(simulationRecord[i][idx][0] as unknown as THREE.Vector3)
         mesh.quaternion.copy(simulationRecord[i][idx][1] as unknown as THREE.Quaternion)
       })
+
+      // Log stored frames count when animation completes
+      if (params.storeFrames && storedFrames.length > 0) {
+        // eslint-disable-next-line no-console
+        console.log(`Stored ${storedFrames.length} frames as base64 PNG strings`)
+        // Optionally, you could save storedFrames to localStorage or send to server
+        // localStorage.setItem('diceFrames', JSON.stringify(storedFrames))
+      }
     }
+
     if (params.magic)
       meshArray.forEach((mesh, i) => makeDesired(mesh, rollResult[i], params.desiredRolls[i]))
+
     renderer.render(scene, camera)
+
+    // Store frame as base64 PNG if storeFrames is enabled
+    if (params.storeFrames) {
+      const canvas = renderer.domElement
+      const base64Frame = canvas.toDataURL('image/png')
+      storedFrames.push(base64Frame)
+    }
   }
   renderHelper()
 }
