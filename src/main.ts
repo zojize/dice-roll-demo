@@ -12,7 +12,7 @@ let renderId: symbol
 
 let renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
-  camera: THREE.PerspectiveCamera,
+  camera: THREE.Camera,
   diceMesh: THREE.Group,
   simulationWorld: CANNON.World
 
@@ -24,6 +24,8 @@ const params = {
   magic: false,
   seed: '',
   storeFrames: false,
+  renderFixedFrames: false,
+  cameraType: 'perspective' as 'orthographic' | 'perspective',
 }
 
 // Fixed constants (not configurable)
@@ -31,8 +33,8 @@ const SEGMENTS = 40
 const EDGE_RADIUS = 0.07
 const NOTCH_RADIUS = 0.12
 const NOTCH_DEPTH = 0.1
-const BOX_WIDTH = 10
-const BOX_HEIGHT = 6
+const BOX_WIDTH = 8
+const BOX_HEIGHT = 8
 
 const meshArray: THREE.Group[] = []
 const simulationDiceArray: CANNON.Body[] = []
@@ -72,6 +74,15 @@ function parseQueryParams() {
   if (urlParams.has('storeFrames'))
     params.storeFrames = urlParams.get('storeFrames') === 'true'
 
+  if (urlParams.has('renderFixedFrames'))
+    params.renderFixedFrames = urlParams.get('renderFixedFrames') === 'true'
+
+  if (urlParams.has('cameraType')) {
+    const cameraType = urlParams.get('cameraType')
+    if (cameraType === 'perspective' || cameraType === 'orthographic')
+      params.cameraType = cameraType
+  }
+
   if (urlParams.has('desiredRolls')) {
     try {
       const rolls = JSON.parse(urlParams.get('desiredRolls')!)
@@ -90,6 +101,7 @@ function updateURL() {
   url.searchParams.set('magic', params.magic.toString())
   url.searchParams.set('seed', params.seed)
   url.searchParams.set('desiredRolls', JSON.stringify(params.desiredRolls))
+  url.searchParams.set('cameraType', params.cameraType)
   window.history.replaceState({}, '', url.toString())
 }
 
@@ -155,10 +167,13 @@ function initScene() {
 
   scene = new THREE.Scene()
 
-  camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300)
+  // Create camera based on params.cameraType
+  if (params.cameraType === 'perspective')
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300)
+  else
+    camera = new THREE.OrthographicCamera(BOX_WIDTH / -2, BOX_WIDTH / 2, BOX_HEIGHT / 2, BOX_HEIGHT / -2, 0.1, 300)
   camera.position.set(0, 2, 0).multiplyScalar(7)
   camera.lookAt(0, -7, 0)
-  camera.zoom = 1.5
 
   updateSceneSize()
 
@@ -220,39 +235,41 @@ function createFloor() {
 function createInvisibleWalls() {
   const halfWidth = BOX_WIDTH / 2
   const halfHeight = BOX_HEIGHT / 2
-  const wallHeight = 10 // Height of the invisible walls
   const floorY = -7 // Same as floor position
 
-  // Create invisible wall bodies for physics simulation
+  // Create invisible wall bodies using planes for physics simulation
+  // CANNON.Plane has a normal pointing in the +Z direction by default
+  // We need to rotate them to face inward toward the box center
   const walls = [
-    // Front wall (positive Z)
+    // Front wall (at positive Z, normal pointing toward -Z)
     {
-      position: new CANNON.Vec3(0, floorY + wallHeight / 2, halfHeight),
-      shape: new CANNON.Box(new CANNON.Vec3(halfWidth, wallHeight / 2, 0.1)),
+      position: new CANNON.Vec3(0, floorY + 5, halfHeight),
+      quaternion: new CANNON.Quaternion().setFromEuler(0, Math.PI, 0), // Rotate 180° around Y to face -Z
     },
-    // Back wall (negative Z)
+    // Back wall (at negative Z, normal pointing toward +Z)
     {
-      position: new CANNON.Vec3(0, floorY + wallHeight / 2, -halfHeight),
-      shape: new CANNON.Box(new CANNON.Vec3(halfWidth, wallHeight / 2, 0.1)),
+      position: new CANNON.Vec3(0, floorY + 5, -halfHeight),
+      quaternion: new CANNON.Quaternion().setFromEuler(0, 0, 0), // Default orientation faces +Z
     },
-    // Left wall (negative X)
+    // Left wall (at negative X, normal pointing toward +X)
     {
-      position: new CANNON.Vec3(-halfWidth, floorY + wallHeight / 2, 0),
-      shape: new CANNON.Box(new CANNON.Vec3(0.1, wallHeight / 2, halfHeight)),
+      position: new CANNON.Vec3(-halfWidth, floorY + 5, 0),
+      quaternion: new CANNON.Quaternion().setFromEuler(0, Math.PI / 2, 0), // Rotate 90° around Y to face +X
     },
-    // Right wall (positive X)
+    // Right wall (at positive X, normal pointing toward -X)
     {
-      position: new CANNON.Vec3(halfWidth, floorY + wallHeight / 2, 0),
-      shape: new CANNON.Box(new CANNON.Vec3(0.1, wallHeight / 2, halfHeight)),
+      position: new CANNON.Vec3(halfWidth, floorY + 5, 0),
+      quaternion: new CANNON.Quaternion().setFromEuler(0, -Math.PI / 2, 0), // Rotate -90° around Y to face -X
     },
   ]
 
   walls.forEach((wall) => {
     const wallBody = new CANNON.Body({
       type: CANNON.Body.STATIC,
-      shape: wall.shape,
+      shape: new CANNON.Plane(),
     })
     wallBody.position.copy(wall.position)
+    wallBody.quaternion.copy(wall.quaternion)
     simulationWorld.addBody(wallBody)
     wallBodies.push(wallBody)
   })
@@ -406,8 +423,23 @@ function showSimulationResults(score: number) {
 }
 
 function updateSceneSize() {
-  camera.aspect = window.innerWidth / window.innerHeight
-  camera.updateProjectionMatrix()
+  const aspect = window.innerWidth / window.innerHeight
+
+  if (camera instanceof THREE.OrthographicCamera) {
+    // For orthographic camera, we need to update the projection matrix differently
+    const size = BOX_WIDTH / 2
+    camera.left = -size * aspect
+    camera.right = size * aspect
+    camera.top = size
+    camera.bottom = -size
+    camera.updateProjectionMatrix()
+  }
+  else if (camera instanceof THREE.PerspectiveCamera) {
+    // For perspective camera, update aspect ratio
+    camera.aspect = aspect
+    camera.updateProjectionMatrix()
+  }
+
   renderer.setSize(window.innerWidth, window.innerHeight)
   renderer.render(scene, camera)
 }
@@ -420,14 +452,17 @@ function throwDice(seed?: string) {
 
 function generateNonOverlappingPositions(numDice: number, rng: () => number): CANNON.Vec3[] {
   const positions: CANNON.Vec3[] = []
-  const minDistance = 1.8 // Reduced minimum distance for closer spacing
+  const minDistance = 1.2 // Reduced minimum distance to fit more dice
   const maxAttempts = 100 // Maximum attempts to find a valid position
   const startHeight = 3 // Height above the floor to start dice
-  const fixedZ = 0 // All dice start in the same Z plane (centered)
 
-  // Calculate usable area within the invisible walls - more conservative margins
-  const usableWidth = Math.min(BOX_WIDTH - 2, 8) // Limit to reasonable area, leave 1 unit margin on each side
+  // Calculate usable area within the invisible walls with more conservative margins
+  // Leave at least 1 unit margin from walls, and account for dice size (0.5 radius)
+  const margin = 1.5 // Conservative margin including dice radius
+  const usableWidth = BOX_WIDTH - 2 * margin
+  const usableHeight = BOX_HEIGHT - 2 * margin
   const halfUsableWidth = usableWidth / 2
+  const halfUsableHeight = usableHeight / 2
 
   for (let i = 0; i < numDice; i++) {
     let validPosition = false
@@ -435,15 +470,16 @@ function generateNonOverlappingPositions(numDice: number, rng: () => number): CA
     let newPosition: CANNON.Vec3
 
     do {
-      // Generate random X position within the constrained area, same Z for all
+      // Generate random X and Z positions within the constrained area
       const x = (rng() - 0.5) * 2 * halfUsableWidth
-      const y = startHeight + rng() * 1 // Small random height variation
+      const z = (rng() - 0.5) * 2 * halfUsableHeight
+      const y = startHeight + rng() * 0.5 // Small random height variation
 
-      newPosition = new CANNON.Vec3(x, y, fixedZ)
+      newPosition = new CANNON.Vec3(x, y, z)
 
-      // Check if this position is far enough from all existing positions (only check X distance since Z is fixed)
+      // Check if this position is far enough from all existing positions
       validPosition = positions.every((existingPos) => {
-        const distance = Math.abs(newPosition.x - existingPos.x)
+        const distance = newPosition.distanceTo(existingPos)
         return distance >= minDistance
       })
 
@@ -452,8 +488,19 @@ function generateNonOverlappingPositions(numDice: number, rng: () => number): CA
 
     // If we couldn't find a valid position after max attempts, fall back to a grid position
     if (!validPosition) {
-      const fallbackX = (i - (numDice - 1) / 2) * minDistance // Center the grid around 0
-      newPosition = new CANNON.Vec3(fallbackX, startHeight, fixedZ)
+      const cols = Math.ceil(Math.sqrt(numDice))
+      const rows = Math.ceil(numDice / cols)
+      const col = i % cols
+      const row = Math.floor(i / cols)
+
+      // Create grid spacing that fits within usable area
+      const gridSpacingX = usableWidth / Math.max(cols - 1, 1)
+      const gridSpacingZ = usableHeight / Math.max(rows - 1, 1)
+
+      const fallbackX = (col - (cols - 1) / 2) * Math.min(gridSpacingX, minDistance)
+      const fallbackZ = (row - (rows - 1) / 2) * Math.min(gridSpacingZ, minDistance)
+
+      newPosition = new CANNON.Vec3(fallbackX, startHeight, fallbackZ)
     }
 
     positions.push(newPosition)
@@ -545,7 +592,7 @@ function simulateThrow(seed?: string, retryCount = 0) {
           }
         }
 
-        if (allStuck && retryCount < 3) {
+        if (allStuck && retryCount < 10) {
           console.warn(`Simulation appears stuck after ${i} steps with seed ${seed}, retrying with new seed (attempt ${retryCount + 1})`)
           eventHandlers.map((f, idx) => f && simulationDiceArray[idx].removeEventListener('sleep', f))
 
@@ -575,41 +622,59 @@ function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simu
   storedFrames.length = 0 // Reset stored frames for new simulation
 
   let lastFrameTime = start
+  let fixedFrameIdx = 0
   const renderHelper = () => {
     const now = performance.now()
-    const step = ((now - start) / 1000) * 60
-    const i = clamp(Math.floor(step), 0, simulationRecord.length - 1)
-    const j = Math.ceil(step)
-
-    if (simulationRecord[j]) {
+    if (params.renderFixedFrames) {
       meshArray.forEach((mesh, idx) => {
-        mesh.position.lerpVectors(
-          simulationRecord[i][idx][0] as unknown as THREE.Vector3,
-          simulationRecord[j][idx][0] as unknown as THREE.Vector3,
-          step - i,
-        )
-        mesh.quaternion.copy(
-          simulationRecord[i][idx][1] as unknown as THREE.Quaternion,
-        ).slerp(
-          new THREE.Quaternion().copy(simulationRecord[j][idx][1] as unknown as THREE.Quaternion),
-          step - i,
-        )
+        mesh.position.copy(simulationRecord[fixedFrameIdx][idx][0] as unknown as THREE.Vector3)
+        mesh.quaternion.copy(simulationRecord[fixedFrameIdx][idx][1] as unknown as THREE.Quaternion)
       })
       if (id === renderId)
         requestAnimationFrame(renderHelper)
+      if (fixedFrameIdx >= simulationRecord.length - 1) {
+        // Log stored frames count when animation completes
+        if (params.storeFrames && storedFrames.length > 0) {
+          // eslint-disable-next-line no-console
+          console.log(`Stored ${storedFrames.length} frames as base64 PNG strings`)
+        }
+        return
+      }
+      fixedFrameIdx++
     }
     else {
-      meshArray.forEach((mesh, idx) => {
-        mesh.position.copy(simulationRecord[i][idx][0] as unknown as THREE.Vector3)
-        mesh.quaternion.copy(simulationRecord[i][idx][1] as unknown as THREE.Quaternion)
-      })
+      const step = ((now - start) / 1000) * 60
+      const i = clamp(Math.floor(step), 0, simulationRecord.length - 1)
+      const j = Math.ceil(step)
 
-      // Log stored frames count when animation completes
-      if (params.storeFrames && storedFrames.length > 0) {
-        // eslint-disable-next-line no-console
-        console.log(`Stored ${storedFrames.length} frames as base64 PNG strings`)
-        // Optionally, you could save storedFrames to localStorage or send to server
-        // localStorage.setItem('diceFrames', JSON.stringify(storedFrames))
+      if (simulationRecord[j]) {
+        meshArray.forEach((mesh, idx) => {
+          mesh.position.lerpVectors(
+            simulationRecord[i][idx][0] as unknown as THREE.Vector3,
+            simulationRecord[j][idx][0] as unknown as THREE.Vector3,
+            step - i,
+          )
+          mesh.quaternion.copy(
+            simulationRecord[i][idx][1] as unknown as THREE.Quaternion,
+          ).slerp(
+            new THREE.Quaternion().copy(simulationRecord[j][idx][1] as unknown as THREE.Quaternion),
+            step - i,
+          )
+        })
+        if (id === renderId)
+          requestAnimationFrame(renderHelper)
+      }
+      else {
+        meshArray.forEach((mesh, idx) => {
+          mesh.position.copy(simulationRecord[i][idx][0] as unknown as THREE.Vector3)
+          mesh.quaternion.copy(simulationRecord[i][idx][1] as unknown as THREE.Quaternion)
+        })
+
+        // Log stored frames count when animation completes
+        if (params.storeFrames && storedFrames.length > 0) {
+          // eslint-disable-next-line no-console
+          console.log(`Stored ${storedFrames.length} frames as base64 PNG strings`)
+        }
       }
     }
 
@@ -622,14 +687,35 @@ function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simu
     if (params.storeFrames) {
       const canvas = renderer.domElement
       const base64Frame = canvas.toDataURL('image/png')
-      if (storedFrames.length > 0)
+      if (!params.renderFixedFrames && storedFrames.length > 0)
         storedFrames[storedFrames.length - 1].duration = now - lastFrameTime
       storedFrames.push({ frame: base64Frame })
+      if (params.renderFixedFrames)
+        storedFrames[storedFrames.length - 1].duration = 1 / 60 * 1000
     }
 
     lastFrameTime = now
   }
   renderHelper()
+}
+
+function switchCameraType() {
+  // Store current camera position and target
+  const position = camera.position.clone()
+  const target = new THREE.Vector3(0, -7, 0)
+
+  // Create new camera based on params.cameraType
+  if (params.cameraType === 'perspective')
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300)
+  else
+    camera = new THREE.OrthographicCamera(BOX_WIDTH / -2, BOX_WIDTH / 2, BOX_HEIGHT / 2, BOX_HEIGHT / -2, 0.1, 300)
+
+  // Restore camera position and target
+  camera.position.copy(position)
+  camera.lookAt(target)
+
+  // Update scene size to handle the new camera type
+  updateSceneSize()
 }
 
 function getFaceUp(euler: CANNON.Vec3) {
