@@ -47,6 +47,7 @@ initUI()
 
 const storedFrames: string[] = []
 ;(window as any).storedFrames = storedFrames
+;(window as any).params = params
 ;(window as any).throwDice = throwDice
 
 throwDice(params.seed || undefined)
