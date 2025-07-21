@@ -45,6 +45,10 @@ initPhysics()
 initScene()
 initUI()
 
+const storedFrames: string[] = []
+;(window as any).storedFrames = storedFrames
+;(window as any).throwDice = throwDice
+
 throwDice(params.seed || undefined)
 
 window.addEventListener('resize', updateSceneSize)
@@ -407,7 +411,6 @@ function updateSceneSize() {
   renderer.render(scene, camera)
 }
 
-(window as any).throwDice = throwDice
 function throwDice(seed?: string) {
   // eslint-disable-next-line symbol-description
   renderId = Symbol()
@@ -566,8 +569,7 @@ function simulateThrow(seed?: string, retryCount = 0) {
   return [rollResult, simulationRecord] as const
 }
 
-const storedFrames: string[] = []
-;(window as any).storedFrames = storedFrames
+
 function renderSimulation([rollResult, simulationRecord]: ReturnType<typeof simulateThrow>, id: symbol) {
   const start = performance.now()
   storedFrames.length = 0 // Reset stored frames for new simulation
